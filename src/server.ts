@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import { pool } from "./db.js";
+import { assignSeats, buildSeatMap } from "./services/seatAssignment.js";
 
 const app = Fastify({ logger: true });
 
@@ -16,9 +17,9 @@ app.get("/flights/:id/passengers", async (req, reply) => {
     conn = await pool.getConnection();
 
     const [flights] = await conn.query<any[]>(
-      SELECT flight_id, takeoff_date_time, takeoff_airport, landing_date_time, landing_airport, airplane_id
+      `SELECT flight_id, takeoff_date_time, takeoff_airport, landing_date_time, landing_airport, airplane_id
        FROM flight
-       WHERE flight_id = ?,
+       WHERE flight_id = ?`,
       [id]
     );
 
@@ -29,13 +30,13 @@ app.get("/flights/:id/passengers", async (req, reply) => {
     const flight = flights[0];
 
     const [rows] = await conn.query<any[]>(
-      SELECT
+      `SELECT
          bp.boarding_pass_id, bp.purchase_id, bp.passenger_id, bp.seat_type_id, bp.seat_id,
          p.dni, p.name, p.age, p.country
        FROM boarding_pass bp
        JOIN passenger p ON p.passenger_id = bp.passenger_id
        WHERE bp.flight_id = ?
-       ORDER BY bp.purchase_id, bp.boarding_pass_id,
+       ORDER BY bp.purchase_id, bp.boarding_pass_id`,
       [id]
     );
 
@@ -48,8 +49,19 @@ app.get("/flights/:id/passengers", async (req, reply) => {
       boardingPassId: r.boarding_pass_id,
       purchaseId: r.purchase_id,
       seatTypeId: r.seat_type_id,
-      seatId: r.seat_id ?? null
+      seatId: r.seat_id ?? null,
     }));
+
+    // ✅ Paso B: traer asientos del avión y asignar en memoria
+    const [seatRows] = await conn.query<any[]>(
+      `SELECT seat_id, seat_row, seat_column, seat_type_id
+       FROM seat
+       WHERE airplane_id = ?`,
+      [flight.airplane_id]
+    );
+
+    const seats = buildSeatMap(seatRows);
+    const passengersAssigned = assignSeats(flight.airplane_id, passengers, seats);
 
     return reply.code(200).send({
       code: 200,
@@ -60,14 +72,16 @@ app.get("/flights/:id/passengers", async (req, reply) => {
         landingDateTime: flight.landing_date_time,
         landingAirport: flight.landing_airport,
         airplaneId: flight.airplane_id,
-        passengers
-      }
+        passengers: passengersAssigned, // 👈 reemplaza passengers
+      },
     });
   } catch (err) {
     req.log.error(err);
     return reply.code(400).send({ code: 400, errors: "could not connect to db" });
   } finally {
-    try { conn?.release?.(); } catch {}
+    try {
+      conn?.release?.();
+    } catch {}
   }
 });
 
