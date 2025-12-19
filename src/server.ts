@@ -52,7 +52,6 @@ app.get("/flights/:id/passengers", async (req, reply) => {
       seatId: r.seat_id ?? null,
     }));
 
-    // ✅ Paso B: traer asientos del avión y asignar en memoria
     const [seatRows] = await conn.query<any[]>(
       `SELECT seat_id, seat_row, seat_column, seat_type_id
        FROM seat
