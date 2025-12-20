@@ -61,11 +61,10 @@ app.get<{ Params: { id: string } }>("/flights/:id/passengers", async (req, reply
       [id]
     )) as unknown as [FlightRow[], unknown];
 
-    if (flights.length === 0) {
+    const flight = flights.at(0);
+    if (!flight) {
       return reply.code(404).send({ code: 404, data: {} });
     }
-
-    const flight = flights[0];
 
     const [rows] = (await conn.query(
       `SELECT
