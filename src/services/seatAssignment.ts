@@ -35,34 +35,59 @@ function getBlocks(airplaneId: number, seats: Seat[]): string[][] {
 
 function seatCoord(seat: Seat, blocks: string[][]): Coord {
   const col = normCol(seat.seatColumn);
+
   for (let b = 0; b < blocks.length; b++) {
-    const idx = blocks[b].indexOf(col);
+    const block = blocks[b];
+    if (!block) continue;
+
+    const idx = block.indexOf(col);
     if (idx !== -1) return { row: seat.seatRow, block: b, pos: idx };
   }
+
   return { row: seat.seatRow, block: 99, pos: 99 };
 }
 
 function adjacentCols(col: string, blocks: string[][]): string[] {
   const c = normCol(col);
+
   for (const block of blocks) {
+    if (!block) continue;
+
     const i = block.indexOf(c);
     if (i !== -1) {
       const out: string[] = [];
-      if (i - 1 >= 0) out.push(block[i - 1]);
-      if (i + 1 < block.length) out.push(block[i + 1]);
+
+      const left = block[i - 1];
+      const right = block[i + 1];
+
+      if (left != null) out.push(left);
+      if (right != null) out.push(right);
+
       return out;
     }
   }
+
   return [];
 }
 
 function dist(a: Seat, b: Seat, blocks: string[][]): number {
   const ca = seatCoord(a, blocks);
   const cb = seatCoord(b, blocks);
-  return Math.abs(ca.row - cb.row) * 10 + Math.abs(ca.block - cb.block) * 4 + Math.abs(ca.pos - cb.pos);
+  return (
+    Math.abs(ca.row - cb.row) * 10 +
+    Math.abs(ca.block - cb.block) * 4 +
+    Math.abs(ca.pos - cb.pos)
+  );
 }
 
-function buildSeatMap(raw: any[]): Seat[] {
+type SeatRowRaw = {
+  seat_id: number | string;
+  seat_row: number | string;
+  seat_column: string;
+  seat_type_id: number | string;
+};
+
+function buildSeatMap(raw: SeatRowRaw[]): Seat[] {
   return raw.map((r) => ({
     seatId: Number(r.seat_id),
     seatRow: Number(r.seat_row),
@@ -81,6 +106,7 @@ export function assignSeats<T extends PassengerLike>(
   const seatsById = new Map<number, Seat>();
   for (const s of seats) seatsById.set(s.seatId, s);
 
+  // Clonar (no mutar el array original)
   const result = passengers.map((p) => ({ ...p }));
 
   const occupied = new Set<number>();
@@ -94,12 +120,13 @@ export function assignSeats<T extends PassengerLike>(
     if (!seatsByType.has(s.seatTypeId)) seatsByType.set(s.seatTypeId, []);
     seatsByType.get(s.seatTypeId)!.push(s);
   }
+
   for (const [t, list] of seatsByType.entries()) {
-    list.sort((a, b) =>
-      a.seatRow - b.seatRow ||
-      seatCoord(a, blocks).block - seatCoord(b, blocks).block ||
-      seatCoord(a, blocks).pos - seatCoord(b, blocks).pos
-    );
+    list.sort((a, b) => {
+      const ca = seatCoord(a, blocks);
+      const cb = seatCoord(b, blocks);
+      return a.seatRow - b.seatRow || ca.block - cb.block || ca.pos - cb.pos;
+    });
     seatsByType.set(t, list);
   }
 
@@ -129,6 +156,7 @@ export function assignSeats<T extends PassengerLike>(
 
     let best: Seat | null = null;
     let bestD = Infinity;
+
     for (const s of list) {
       if (!avail.has(s.seatId)) continue;
       const d = dist(s, anchor, blocks);
@@ -137,6 +165,7 @@ export function assignSeats<T extends PassengerLike>(
         best = s;
       }
     }
+
     return best;
   };
 
@@ -144,17 +173,23 @@ export function assignSeats<T extends PassengerLike>(
     const avail = availableIdsByType.get(seatTypeId);
     if (!avail) return null;
 
-    const neighbors = adjacentCols(seat.seatColumn, blocks);
+    const neighbors = adjacentCols(seat.seatColumn, blocks); // <- strings garantizados
+    const list = seatsByType.get(seatTypeId) ?? [];
+
     for (const nc of neighbors) {
-      const candidate = (seatsByType.get(seatTypeId) ?? []).find(
+      const candidate = list.find(
         (s) => s.seatRow === seat.seatRow && normCol(s.seatColumn) === nc
       );
       if (candidate && avail.has(candidate.seatId)) return candidate;
     }
+
     return null;
   };
 
-  const findAdjacentPair = (seatTypeId: number, anchor: Seat | null): [Seat, Seat] | null => {
+  const findAdjacentPair = (
+    seatTypeId: number,
+    anchor: Seat | null
+  ): [Seat, Seat] | null => {
     const list = seatsByType.get(seatTypeId) ?? [];
     const avail = availableIdsByType.get(seatTypeId);
     if (!avail || avail.size === 0) return null;
@@ -171,15 +206,26 @@ export function assignSeats<T extends PassengerLike>(
     }
 
     for (const [row, rowSeats] of byRow.entries()) {
-      rowSeats.sort((a, b) => seatCoord(a, blocks).block - seatCoord(b, blocks).block || seatCoord(a, blocks).pos - seatCoord(b, blocks).pos);
+      rowSeats.sort((a, b) => {
+        const ca = seatCoord(a, blocks);
+        const cb = seatCoord(b, blocks);
+        return ca.block - cb.block || ca.pos - cb.pos;
+      });
+
       for (let i = 0; i < rowSeats.length; i++) {
         const a = rowSeats[i];
+        if (!a) continue;
+
         const neighCols = adjacentCols(a.seatColumn, blocks);
         for (const nc of neighCols) {
           const b = rowSeats.find((s) => normCol(s.seatColumn) === nc);
           if (!b) continue;
+
           const pair: [Seat, Seat] = a.seatId < b.seatId ? [a, b] : [b, a];
-          const score = anchor ? dist(pair[0], anchor, blocks) + dist(pair[1], anchor, blocks) : row * 10;
+          const score = anchor
+            ? dist(pair[0], anchor, blocks) + dist(pair[1], anchor, blocks)
+            : row * 10;
+
           if (score < bestScore) {
             bestScore = score;
             best = pair;
@@ -198,7 +244,7 @@ export function assignSeats<T extends PassengerLike>(
     groups.get(p.purchaseId)!.push(p);
   }
 
-  for (const [purchaseId, group] of groups.entries()) {
+  for (const [, group] of groups.entries()) {
     // anclas por tipo
     const anchorsByType = new Map<number, Seat>();
     for (const p of group) {
@@ -214,7 +260,10 @@ export function assignSeats<T extends PassengerLike>(
       const type = minor.seatTypeId;
 
       // buscar adulto ya sentado en el mismo tipo
-      const seatedAdult = group.find((p) => p.age >= 18 && p.seatId != null && p.seatTypeId === type);
+      const seatedAdult = group.find(
+        (p) => p.age >= 18 && p.seatId != null && p.seatTypeId === type
+      );
+
       if (seatedAdult?.seatId != null) {
         const adultSeat = seatsById.get(seatedAdult.seatId) ?? null;
         if (adultSeat) {
@@ -229,8 +278,12 @@ export function assignSeats<T extends PassengerLike>(
       }
 
       // si no hay adulto sentado, sentar un par (adulto + menor) adyacente
-      const unseatedAdult = group.find((p) => p.age >= 18 && p.seatId == null && p.seatTypeId === type);
+      const unseatedAdult = group.find(
+        (p) => p.age >= 18 && p.seatId == null && p.seatTypeId === type
+      );
+
       const anchor = anchorsByType.get(type) ?? null;
+
       if (unseatedAdult) {
         const pair = findAdjacentPair(type, anchor);
         if (pair) {
@@ -238,12 +291,15 @@ export function assignSeats<T extends PassengerLike>(
           minor.seatId = pair[1].seatId;
           takeSeat(pair[0].seatId);
           takeSeat(pair[1].seatId);
-          anchorsByType.set(type, seatsById.get(pair[0].seatId)!);
+
+          const anchorSeat = seatsById.get(pair[0].seatId);
+          if (anchorSeat) anchorsByType.set(type, anchorSeat);
+
           continue;
         }
       }
 
-      // fallback: asignar lo mejor posible (por si el dataset trae casos raros)
+      // fallback: asignar lo mejor posible
       const best = pickBestSeat(type, anchor);
       if (best) {
         minor.seatId = best.seatId;
@@ -259,6 +315,7 @@ export function assignSeats<T extends PassengerLike>(
       const anchor = anchorsByType.get(type) ?? null;
       const best = pickBestSeat(type, anchor);
       if (!best) continue;
+
       p.seatId = best.seatId;
       takeSeat(best.seatId);
       if (!anchorsByType.has(type)) anchorsByType.set(type, best);
