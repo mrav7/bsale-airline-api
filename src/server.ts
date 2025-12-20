@@ -4,8 +4,6 @@ import { assignSeats, buildSeatMap } from "./services/seatAssignment.js";
 
 const app = Fastify({ logger: true });
 
-app.get("/health", async () => ({ ok: true }));
-
 app.get("/flights/:id/passengers", async (req, reply) => {
   const id = Number((req.params as any).id);
   if (!Number.isInteger(id) || id <= 0) {
