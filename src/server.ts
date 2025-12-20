@@ -1,33 +1,73 @@
 import Fastify from "fastify";
+import type { PoolConnection } from "mysql2/promise";
 import { pool } from "./db.js";
 import { assignSeats, buildSeatMap } from "./services/seatAssignment.js";
 
 const app = Fastify({ logger: true });
 
-app.get("/flights/:id/passengers", async (req, reply) => {
-  const id = Number((req.params as any).id);
+type FlightRow = {
+  flight_id: number;
+  takeoff_date_time: number;
+  takeoff_airport: string;
+  landing_date_time: number;
+  landing_airport: string;
+  airplane_id: number;
+};
+
+type PassengerRow = {
+  boarding_pass_id: number;
+  purchase_id: number;
+  passenger_id: number;
+  seat_type_id: number;
+  seat_id: number | null;
+  dni: string | number | null;
+  name: string;
+  age: number;
+  country: string;
+};
+
+type SeatRow = {
+  seat_id: number;
+  seat_row: number;
+  seat_column: string;
+  seat_type_id: number;
+};
+
+function normalizeDni(value: PassengerRow["dni"]): number | null {
+  if (value == null) return null;
+
+  const s = typeof value === "string" ? value.trim() : String(value);
+  if (s === "") return null;
+
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+app.get<{ Params: { id: string } }>("/flights/:id/passengers", async (req, reply) => {
+  const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     return reply.code(404).send({ code: 404, data: {} });
   }
 
-  let conn: any;
+  let conn: PoolConnection | null = null;
+
   try {
     conn = await pool.getConnection();
 
-    const [flights] = await conn.query<any[]>(
+    const [flights] = (await conn.query(
       `SELECT flight_id, takeoff_date_time, takeoff_airport, landing_date_time, landing_airport, airplane_id
        FROM flight
        WHERE flight_id = ?`,
       [id]
-    );
+    )) as unknown as [FlightRow[], unknown];
 
-    if (!flights.length) {
+    if (flights.length === 0) {
       return reply.code(404).send({ code: 404, data: {} });
     }
 
     const flight = flights[0];
 
-    const [rows] = await conn.query<any[]>(
+    const [rows] = (await conn.query(
       `SELECT
          bp.boarding_pass_id, bp.purchase_id, bp.passenger_id, bp.seat_type_id, bp.seat_id,
          p.dni, p.name, p.age, p.country
@@ -36,11 +76,11 @@ app.get("/flights/:id/passengers", async (req, reply) => {
        WHERE bp.flight_id = ?
        ORDER BY bp.purchase_id, bp.boarding_pass_id`,
       [id]
-    );
+    )) as unknown as [PassengerRow[], unknown];
 
     const passengers = rows.map((r) => ({
       passengerId: r.passenger_id,
-      dni: r.dni == null ? null : Number(r.dni),
+      dni: normalizeDni(r.dni),
       name: r.name,
       age: r.age,
       country: r.country,
@@ -50,12 +90,12 @@ app.get("/flights/:id/passengers", async (req, reply) => {
       seatId: r.seat_id ?? null,
     }));
 
-    const [seatRows] = await conn.query<any[]>(
+    const [seatRows] = (await conn.query(
       `SELECT seat_id, seat_row, seat_column, seat_type_id
        FROM seat
        WHERE airplane_id = ?`,
       [flight.airplane_id]
-    );
+    )) as unknown as [SeatRow[], unknown];
 
     const seats = buildSeatMap(seatRows);
     const passengersAssigned = assignSeats(flight.airplane_id, passengers, seats);
@@ -69,7 +109,7 @@ app.get("/flights/:id/passengers", async (req, reply) => {
         landingDateTime: flight.landing_date_time,
         landingAirport: flight.landing_airport,
         airplaneId: flight.airplane_id,
-        passengers: passengersAssigned, // 👈 reemplaza passengers
+        passengers: passengersAssigned,
       },
     });
   } catch (err) {
@@ -77,7 +117,7 @@ app.get("/flights/:id/passengers", async (req, reply) => {
     return reply.code(400).send({ code: 400, errors: "could not connect to db" });
   } finally {
     try {
-      conn?.release?.();
+      conn?.release();
     } catch {}
   }
 });
