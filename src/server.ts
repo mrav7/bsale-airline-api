@@ -40,7 +40,7 @@ app.get("/flights/:id/passengers", async (req, reply) => {
 
     const passengers = rows.map((r) => ({
       passengerId: r.passenger_id,
-      dni: r.dni,
+      dni: r.dni == null ? null : Number(r.dni),
       name: r.name,
       age: r.age,
       country: r.country,
