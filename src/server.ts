@@ -43,6 +43,13 @@ function normalizeDni(value: PassengerRow["dni"]): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+app.get("/healthz", async () => ({ ok: true }));
+
+app.get("/", async () => ({
+  ok: true,
+  message: "Use GET /flights/:id/passengers",
+}));
+
 app.get<{ Params: { id: string } }>("/flights/:id/passengers", async (req, reply) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
