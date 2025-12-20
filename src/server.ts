@@ -43,8 +43,10 @@ function normalizeDni(value: PassengerRow["dni"]): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Healthcheck simple para Render / monitoreo
 app.get("/healthz", async () => ({ ok: true }));
 
+// Root informativo (evita 404 en "/")
 app.get("/", async () => ({
   ok: true,
   message: "Use GET /flights/:id/passengers",
